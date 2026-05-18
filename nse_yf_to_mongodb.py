@@ -80,6 +80,9 @@ def fetch_and_insert_ticker(ticker_symbol):
             if data.empty:
                 return ticker_symbol, 0, None
 
+            # Round to 2 decimal places for OHLC and volume to reduce document size.
+            data = data.round({'Open': 2, 'High': 2, 'Low': 2, 'Close': 2, 'Volume': 0})
+
             data = data.reset_index()
             docs_7d = []
 
