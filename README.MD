@@ -144,3 +144,10 @@ Both collections are time series collections with:
 - `requirements.txt` - Python dependencies
 - `.env` - Environment configuration (not in git)
 - `Queries.md` - Useful MongoDB query examples
+
+## License
+
+This project is licensed under the MIT License.
+You are free to use, modify, and distribute it.
+There is no warranty, and the authors are not liable for any damages or claims.
+See [LICENSE](LICENSE) for full terms.
