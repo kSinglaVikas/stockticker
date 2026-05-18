@@ -1,6 +1,6 @@
 # Useful Queries
 
-# This document contains useful MongoDB queries for analyzing time series data in the `1d_stocks` collection. You can run these queries in the MongoDB shell or using a MongoDB client.
+This document contains useful MongoDB queries for analyzing time series data in the stocks collection. You can run these queries in the MongoDB shell or using a MongoDB client.
 
 ## 1. Top 5 Tickers by Number of Records
 ```
