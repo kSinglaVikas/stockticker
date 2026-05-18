@@ -1,4 +1,7 @@
 import os
+import random
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from nsetools import Nse
 import yfinance as yf
 from pymongo import MongoClient
@@ -45,24 +48,48 @@ for symbol in stock_codes:
 
 print(f"Found {len(tickers)} tickers. Starting data fetch and insert...")
 
-counter = 0
-for ticker_symbol in tickers:
-    try:
-        ticker = yf.Ticker(ticker_symbol)
-        data = ticker.history(period='7d', interval='1m')
-        if not data.empty:
+# Rebuild 1d_stocks on each run so it represents only one latest IST day.
+coll_1d.delete_many({})
+
+try:
+    max_workers = max(1, int(os.getenv('YF_FETCH_WORKERS', '4')))
+except ValueError:
+    max_workers = 4
+
+try:
+    max_retries = max(0, int(os.getenv('YF_MAX_RETRIES', '4')))
+except ValueError:
+    max_retries = 4
+
+try:
+    backoff_base_seconds = max(0.1, float(os.getenv('YF_BACKOFF_BASE_SECONDS', '1.0')))
+except ValueError:
+    backoff_base_seconds = 1.0
+
+try:
+    backoff_jitter_seconds = max(0.0, float(os.getenv('YF_BACKOFF_JITTER_SECONDS', '0.5')))
+except ValueError:
+    backoff_jitter_seconds = 0.5
+
+
+def fetch_and_insert_ticker(ticker_symbol):
+    for attempt in range(max_retries + 1):
+        try:
+            ticker = yf.Ticker(ticker_symbol)
+            data = ticker.history(period='7d', interval='1m')
+            if data.empty:
+                return ticker_symbol, 0, None
+
             data = data.reset_index()
             docs_7d = []
-            docs_1d = []
-            
-            # Get the latest date in the data
-            data['date'] = data['Datetime'].dt.date
-            latest_date = data['date'].max()
-            
+
+            # Yahoo returns UTC; convert to IST for storage and day-level slicing.
+            data['ts_ist'] = pd.to_datetime(data['Datetime'], utc=True).dt.tz_convert('Asia/Kolkata').dt.tz_localize(None)
+
             for _, row in data.iterrows():
                 doc = {
                     "t": ticker_symbol,
-                    "ts": row['Datetime'],
+                    "ts": row['ts_ist'],
                     "o": float(row['Open']),
                     "h": float(row['High']),
                     "l": float(row['Low']),
@@ -70,24 +97,94 @@ for ticker_symbol in tickers:
                     "v": float(row['Volume'])
                 }
                 docs_7d.append(doc)
-                
-                # Add to 1d collection only if it's from the latest day
-                if row['date'] == latest_date:
-                    docs_1d.append(doc)
-            
+
             if docs_7d:
                 coll_7d.insert_many(docs_7d)
-            if docs_1d:
-                coll_1d.insert_many(docs_1d)
-        else:
+
+            return ticker_symbol, len(docs_7d), None
+        except Exception as e:
+            error_msg = str(e)
+            is_rate_limited = (
+                'Too Many Requests' in error_msg
+                or 'Rate limited' in error_msg
+                or '429' in error_msg
+            )
+
+            if is_rate_limited and attempt < max_retries:
+                sleep_seconds = (backoff_base_seconds * (2 ** attempt)) + random.uniform(0, backoff_jitter_seconds)
+                time.sleep(sleep_seconds)
+                continue
+
+            return ticker_symbol, 0, error_msg
+
+print(f"Using {max_workers} parallel workers for Yahoo fetch")
+print(
+    f"Retry config: max_retries={max_retries}, "
+    f"backoff_base_seconds={backoff_base_seconds}, "
+    f"backoff_jitter_seconds={backoff_jitter_seconds}"
+)
+
+counter = 0
+with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    futures = [executor.submit(fetch_and_insert_ticker, ticker_symbol) for ticker_symbol in tickers]
+
+    for future in as_completed(futures):
+        ticker_symbol, inserted_count, error = future.result()
+
+        if error:
+            print(f"Error fetching {ticker_symbol}: {error}")
+        elif inserted_count == 0:
             print(f"No data for {ticker_symbol}")
-    except Exception as e:
-        print(f"Error fetching {ticker_symbol}: {e}")
-    counter += 1
-    if counter % 10 == 0:
-        print(f"Processed {counter}/{len(tickers)} tickers...")
+
+        counter += 1
+        if counter % 10 == 0:
+            print(f"Processed {counter}/{len(tickers)} tickers...")
 
 print("Done.")
+
+# Build 1d_stocks from 7d_stocks using aggregation pipeline for latest IST date.
+latest_date_pipeline = [
+    {
+        '$project': {
+            'day_ist': {
+                '$dateTrunc': {
+                    'date': '$ts',
+                    'unit': 'day',
+                    'timezone': 'Asia/Kolkata'
+                }
+            }
+        }
+    },
+    {'$group': {'_id': None, 'latest_day_ist': {'$max': '$day_ist'}}}
+]
+
+latest_day_result = list(coll_7d.aggregate(latest_date_pipeline))
+
+if latest_day_result:
+    latest_day_ist = latest_day_result[0]['latest_day_ist']
+    copy_pipeline = [
+        {
+            '$addFields': {
+                'day_ist': {
+                    '$dateTrunc': {
+                        'date': '$ts',
+                        'unit': 'day',
+                        'timezone': 'Asia/Kolkata'
+                    }
+                }
+            }
+        },
+        {'$match': {'day_ist': latest_day_ist}},
+        {'$project': {'_id': 0, 'day_ist': 0}}
+    ]
+
+    latest_day_docs = list(coll_7d.aggregate(copy_pipeline))
+    if latest_day_docs:
+        coll_1d.insert_many(latest_day_docs)
+    print(f"Latest IST date in 1d_stocks: {latest_day_ist.date()}")
+    print(f"Inserted {len(latest_day_docs)} docs into 1d_stocks")
+else:
+    print("No docs were inserted into 1d_stocks")
 print(f"Data inserted to:")
 print(f"  - 7d_stocks: Complete 7-day minute-level data")
 print(f"  - 1d_stocks: Latest day's minute-level data (for benchmarking)")

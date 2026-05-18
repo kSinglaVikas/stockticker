@@ -73,6 +73,13 @@ This fetches 7-day minute-level OHLC data for all NSE stocks and populates two c
 - **`7d_stocks`**: Complete 7-day minute-level data for all tickers
 - **`1d_stocks`**: Latest day's minute-level data (extracted from the 7-day fetch) for benchmarking
 
+To speed up Yahoo fetch, run in parallel with configurable workers (default: 4):
+Avoiding too many workers to prevent hitting Yahoo Finance rate limits. Adjust based on your network and system capabilities.
+
+```bash
+YF_FETCH_WORKERS=4 python3 nse_yf_to_mongodb.py
+```
+
 #### Step 2: Run Query Benchmark
 
 Benchmark queries against the 1-day data:
