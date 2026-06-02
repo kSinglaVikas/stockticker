@@ -70,8 +70,7 @@ def run_worker(
         try:
             filter_doc = {"t": random.choice(symbols), "ts": {"$gte": datetime(2026, 6, 2, 9, 15), "$lt": datetime(2026, 6, 2, 15, 30)}}
             start = time.perf_counter()
-#            _ = list(coll.find(filter_doc, projection_doc, sort=[("ts", 1)]))
-            _ = list(coll.find(filter_doc, projection_doc))
+            _ = list(coll.find(filter_doc, projection_doc, sort=[("ts", 1)]))
             elapsed_ms = (time.perf_counter() - start) * 1000.0
             client_latencies_ms.append(elapsed_ms)
             queries += 1
