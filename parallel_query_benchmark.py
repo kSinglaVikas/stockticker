@@ -70,7 +70,7 @@ def run_worker(
         start = time.perf_counter()
         try:
             filter_doc = {"t": random.choice(symbols)}
-            _ = coll.find_one(filter_doc, projection_doc, sort=[("ts", -1)])
+            _ = coll.find_one(filter_doc, projection_doc, sort=[("ts", 1)])
             elapsed_ms = (time.perf_counter() - start) * 1000.0
             client_latencies_ms.append(elapsed_ms)
             queries += 1
