@@ -67,9 +67,9 @@ def run_worker(
     client_latencies_ms: List[float] = []
 
     while time.time() < stop_at:
-        start = time.perf_counter()
         try:
             filter_doc = {"t": random.choice(symbols)}
+            start = time.perf_counter()
             _ = coll.find_one(filter_doc, projection_doc, sort=[("ts", 1)])
             elapsed_ms = (time.perf_counter() - start) * 1000.0
             client_latencies_ms.append(elapsed_ms)
@@ -164,12 +164,11 @@ def run_aggregate_worker(
     binsize_latencies_ms: Dict[int, List[float]] = {5: [], 15: [], 30: []}
 
     while time.time() < stop_at:
-        start = time.perf_counter()
         try:
             symbol = random.choice(symbols)
             bin_size_minutes = random.choice([5, 15, 30])
             start_ts, end_ts = _pick_random_window(min_ts, max_ts, bin_size_minutes)
-
+    
             pipeline = [
                 {
                     "$match": {
@@ -197,7 +196,8 @@ def run_aggregate_worker(
                 },
                 {"$sort": {"_id": 1}},
             ]
-
+    
+            start = time.perf_counter()
             _ = list(coll.aggregate(pipeline))
             elapsed_ms = (time.perf_counter() - start) * 1000.0
             client_latencies_ms.append(elapsed_ms)
