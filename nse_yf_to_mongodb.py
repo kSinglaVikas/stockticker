@@ -26,16 +26,18 @@ if '7d_stocks' not in db.list_collection_names():
         }
     )
 
-# Create the 1-day time series collection if it doesn't exist
-if '1d_stocks' not in db.list_collection_names():
-    db.create_collection(
-        '1d_stocks',
-        timeseries={
-            'timeField': 'ts',
-            'metaField': 't',
-            'granularity': 'minutes'
-        }
-    )
+# Delete 1d_stocks collection if it exists to ensure it only contains the latest IST day data after this script runs.
+if '1d_stocks' in db.list_collection_names():
+    db.drop_collection('1d_stocks')
+
+db.create_collection(
+    '1d_stocks',
+    timeseries={
+        'timeField': 'ts',
+        'metaField': 't',
+        'granularity': 'minutes'
+    }
+)
 
 nse = Nse()
 
@@ -47,9 +49,6 @@ for symbol in stock_codes:
         tickers.append(symbol + '.BO')
 
 print(f"Found {len(tickers)} tickers. Starting data fetch and insert...")
-
-# Rebuild 1d_stocks on each run so it represents only one latest IST day.
-coll_1d.delete_many({})
 
 try:
     max_workers = max(1, int(os.getenv('YF_FETCH_WORKERS', '4')))
