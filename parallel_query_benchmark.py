@@ -133,7 +133,7 @@ def _pick_random_window(
 ) -> Tuple[datetime, datetime]:
     total_seconds = max((max_ts - min_ts).total_seconds(), 1.0)
     # Use a random window spanning a practical number of bins.
-    bins_in_window = random.randint(20, 80)
+    bins_in_window = random.randint(40, 200)  # e.g. 40 to 200 bins of the chosen size
     window_seconds = bin_size_minutes * 60 * bins_in_window
     if total_seconds <= window_seconds:
         return min_ts, max_ts
