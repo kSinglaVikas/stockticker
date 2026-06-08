@@ -53,7 +53,10 @@ def setup_logging(log_file: str = "benchmark.log"):
     # Register PyMongo event listeners to capture driver operations
     driver_logger = logging.getLogger("pymongo.driver")
     driver_logger.setLevel(logging.DEBUG)
-    driver_logger.addHandler(fh)
+    # Let records propagate to the root logger's file handler.
+    # Attaching fh here and on root duplicates each command log line.
+    driver_logger.handlers = []
+    driver_logger.propagate = True
     
     pymongo.monitoring.register(CommandLogger(driver_logger))
     

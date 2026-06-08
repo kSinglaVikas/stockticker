@@ -1,4 +1,5 @@
 nsetools==2.0.1
+matplotlib==3.10.6
 pandas==3.0.2
 pymongo==4.17.0
 python-dotenv==1.2.2
