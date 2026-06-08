@@ -1,5 +1,6 @@
 import os
 import time
+import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Dict, List
@@ -8,6 +9,31 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 from pymongo.collection import Collection
 from pymongo.database import Database
+
+# --- Logging Setup ---
+def setup_logging(log_file: str = "replay_minute_timeseries.log"):
+    """Configure logging for app and MongoDB driver."""
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+    
+    fh = logging.FileHandler(log_file)
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter(log_format))
+    logger.addHandler(fh)
+    
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(logging.Formatter(log_format))
+    logger.addHandler(ch)
+    
+    logging.getLogger("pymongo").setLevel(logging.DEBUG)
+    logging.getLogger("pymongo.connection").setLevel(logging.DEBUG)
+    logging.getLogger("pymongo.topology").setLevel(logging.DEBUG)
+    logging.getLogger("pymongo.command").setLevel(logging.DEBUG)
+    
+    return logger
 
 
 DEFAULT_START_TS = "2026-05-07T03:45:00.000+00:00"
@@ -117,6 +143,10 @@ def replay_grouped_docs(
 
 
 def main() -> None:
+    # Initialize logging
+    logger = setup_logging(log_file=f"replay_minute_timeseries_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    logger.info("Minute replay started")
+    
     load_dotenv()
 
     db_name = os.getenv("REPLAY_DB", DEFAULT_DB)

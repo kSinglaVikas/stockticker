@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import random
 import statistics
@@ -7,10 +8,60 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 from pymongo import MongoClient
+import pymongo.monitoring
+
+# --- PyMongo Event Listeners ---
+class CommandLogger(pymongo.monitoring.CommandListener):
+    """Log all MongoDB commands."""
+    
+    def __init__(self, logger):
+        self.logger = logger
+    
+    def started(self, event):
+        self.logger.info(f"[COMMAND_STARTED] cmd={event.command_name} request_id={event.request_id}")
+    
+    def succeeded(self, event):
+        self.logger.info(f"[COMMAND_SUCCEEDED] cmd={event.command_name} duration_µs={event.duration_micros} request_id={event.request_id}")
+    
+    def failed(self, event):
+        self.logger.warning(f"[COMMAND_FAILED] cmd={event.command_name} failure={event.failure} request_id={event.request_id}")
+
+
+# --- Logging Setup ---
+def setup_logging(log_file: str = "benchmark.log"):
+    """Configure logging for app and MongoDB driver."""
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    formatter = logging.Formatter(log_format)
+    
+    # Create root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    
+    # Remove any existing handlers to avoid duplicates
+    root_logger.handlers = []
+    
+    # File handler (debug level)
+    fh = logging.FileHandler(log_file)
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(formatter)
+    root_logger.addHandler(fh)
+    
+    # Register PyMongo event listeners to capture driver operations
+    driver_logger = logging.getLogger("pymongo.driver")
+    driver_logger.setLevel(logging.DEBUG)
+    driver_logger.addHandler(fh)
+    
+    pymongo.monitoring.register(CommandLogger(driver_logger))
+    
+    # Force root logger to be used for propagation
+    root_logger.setLevel(logging.DEBUG)
+    
+    return root_logger
+
 
 
 SYMBOL_POOL = [
@@ -61,6 +112,9 @@ def run_worker(
 ) -> WorkerStats:
     client = MongoClient(mongo_uri, appname="parallel-query-benchmark")
     coll = client[db_name][collection_name]
+    
+    worker_logger = logging.getLogger(f"worker.{worker_id}")
+    worker_logger.info(f"Worker {worker_id} started - connecting to {db_name}.{collection_name}")
 
     queries = 0
     errors = 0
@@ -70,16 +124,23 @@ def run_worker(
         try:
             filter_doc = {"t": random.choice(symbols), "ts": {"$gte": datetime(2026, 6, 2, 9, 15), "$lt": datetime(2026, 6, 2, 15, 30)}}
             start = time.perf_counter()
-            _ = list(coll.find(filter_doc, projection_doc, sort=[("ts", 1)]))
+            result = list(coll.find(filter_doc, projection_doc, sort=[("ts", 1)]))
             elapsed_ms = (time.perf_counter() - start) * 1000.0
             client_latencies_ms.append(elapsed_ms)
+            
+            # Log query details to capture driver behavior
+            if queries % 10 == 0:  # Log every 10th query to avoid spam
+                worker_logger.debug(f"find query completed: filter_keys={list(filter_doc.keys())}, docs_returned={len(result)}, elapsed_ms={elapsed_ms:.2f}")
+            
             queries += 1
             time.sleep(wait_ms / 1000.0)
 
-        except Exception:
+        except Exception as e:
+            worker_logger.error(f"Query failed: {e}", exc_info=True)
             errors += 1
 
     client.close()
+    worker_logger.info(f"Worker {worker_id} finished - {queries} queries, {errors} errors")
 
     return WorkerStats(
         worker_id=worker_id,
@@ -157,6 +218,9 @@ def run_aggregate_worker(
 ) -> WorkerStats:
     client = MongoClient(mongo_uri, appname="parallel-query-benchmark")
     coll = client[db_name][collection_name]
+    
+    worker_logger = logging.getLogger(f"agg_worker.{worker_id}")
+    worker_logger.info(f"Aggregate worker {worker_id} started - connecting to {db_name}.{collection_name}")
 
     queries = 0
     errors = 0
@@ -198,16 +262,23 @@ def run_aggregate_worker(
             ]
     
             start = time.perf_counter()
-            _ = list(coll.aggregate(pipeline))
+            result = list(coll.aggregate(pipeline))
             elapsed_ms = (time.perf_counter() - start) * 1000.0
             client_latencies_ms.append(elapsed_ms)
             binsize_latencies_ms.setdefault(bin_size_minutes, []).append(elapsed_ms)
+            
+            # Log aggregation details to capture driver behavior
+            if queries % 10 == 0:  # Log every 10th query to avoid spam
+                worker_logger.debug(f"aggregate query completed: bin_size={bin_size_minutes}m, stages={len(pipeline)}, docs_returned={len(result)}, elapsed_ms={elapsed_ms:.2f}")
+            
             queries += 1
             time.sleep(wait_ms / 1000.0)
-        except Exception:
+        except Exception as e:
+            worker_logger.error(f"Aggregation failed: {e}", exc_info=True)
             errors += 1
 
     client.close()
+    worker_logger.info(f"Aggregate worker {worker_id} finished - {queries} queries, {errors} errors")
 
     return WorkerStats(
         worker_id=worker_id,
@@ -342,8 +413,8 @@ def main() -> None:
         "--minutes",
         type=int,
         default=2,
-        choices=[2, 3, 4, 5, 10],
-        help="Test duration in minutes (2 to 10)",
+        choices=[1, 2, 3, 4, 5, 10],
+        help="Test duration in minutes (1 to 10)",
     )
     parser.add_argument("--db", default="ohcl_data", help="Database name")
     parser.add_argument("--collection", default="1d_stocks", help="Collection name")
@@ -368,6 +439,11 @@ def main() -> None:
     args = parser.parse_args()
 
     load_dotenv()
+    
+    # Initialize logging
+    logger = setup_logging(log_file=f"benchmark_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    logger.info("Benchmark started")
+    
     mongo_uri = os.getenv("MONGO_ATLAS_URI", "mongodb://localhost:27017")
 
     duration_seconds = args.minutes * 60

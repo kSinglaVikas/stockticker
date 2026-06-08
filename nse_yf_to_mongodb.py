@@ -1,6 +1,7 @@
 import os
 import random
 import time
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from nsetools import Nse
 import yfinance as yf
@@ -8,7 +9,37 @@ from pymongo import MongoClient
 from dotenv import load_dotenv
 import pandas as pd
 
+# --- Logging Setup ---
+def setup_logging(log_file: str = "nse_yf_to_mongodb.log"):
+    """Configure logging for app and MongoDB driver."""
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+    
+    fh = logging.FileHandler(log_file)
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter(log_format))
+    logger.addHandler(fh)
+    
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(logging.Formatter(log_format))
+    logger.addHandler(ch)
+    
+    logging.getLogger("pymongo").setLevel(logging.DEBUG)
+    logging.getLogger("pymongo.connection").setLevel(logging.DEBUG)
+    logging.getLogger("pymongo.topology").setLevel(logging.DEBUG)
+    logging.getLogger("pymongo.command").setLevel(logging.DEBUG)
+    
+    return logger
+
 load_dotenv()
+
+# Initialize logging
+logger = setup_logging(log_file=f"nse_yf_to_mongodb_{time.strftime('%Y%m%d_%H%M%S')}.log")
+logger.info("NSE/Yahoo Finance data ingestion started")
+
 MONGO_ATLAS_URI = os.getenv('MONGO_ATLAS_URI', 'mongodb://localhost:27017')
 client = MongoClient(MONGO_ATLAS_URI)
 db = client['ohcl_data']
