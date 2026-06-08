@@ -105,19 +105,15 @@ def percentile(values: List[float], p: float) -> Optional[float]:
 
 def run_worker(
     worker_id: int,
-    mongo_uri: str,
-    db_name: str,
-    collection_name: str,
+    coll,
+    collection_label: str,
     symbols: List[str],
     projection_doc: Dict[str, int],
     stop_at: float,
     wait_ms: float,
 ) -> WorkerStats:
-    client = MongoClient(mongo_uri, appname="parallel-query-benchmark")
-    coll = client[db_name][collection_name]
-    
     worker_logger = logging.getLogger(f"worker.{worker_id}")
-    worker_logger.info(f"Worker {worker_id} started - connecting to {db_name}.{collection_name}")
+    worker_logger.info(f"Worker {worker_id} started - using {collection_label}")
 
     queries = 0
     errors = 0
@@ -142,7 +138,6 @@ def run_worker(
             worker_logger.error(f"Query failed: {e}", exc_info=True)
             errors += 1
 
-    client.close()
     worker_logger.info(f"Worker {worker_id} finished - {queries} queries, {errors} errors")
 
     return WorkerStats(
@@ -155,39 +150,32 @@ def run_worker(
 
 
 def _resolve_ts_bounds(
-    mongo_uri: str,
-    db_name: str,
-    collection_name: str,
+    coll,
 ) -> Tuple[datetime, datetime]:
     """Fetch timestamp bounds for random aggregate windows."""
     fallback_max = datetime.now()
     fallback_min = fallback_max - timedelta(days=30)
 
-    client = MongoClient(mongo_uri, appname="parallel-query-benchmark")
-    try:
-        coll = client[db_name][collection_name]
-        result = list(
-            coll.aggregate(
-                [
-                    {
-                        "$group": {
-                            "_id": None,
-                            "min_ts": {"$min": "$ts"},
-                            "max_ts": {"$max": "$ts"},
-                        }
+    result = list(
+        coll.aggregate(
+            [
+                {
+                    "$group": {
+                        "_id": None,
+                        "min_ts": {"$min": "$ts"},
+                        "max_ts": {"$max": "$ts"},
                     }
-                ]
-            )
+                }
+            ]
         )
-        if not result:
-            return fallback_min, fallback_max
-        min_ts = result[0].get("min_ts")
-        max_ts = result[0].get("max_ts")
-        if isinstance(min_ts, datetime) and isinstance(max_ts, datetime):
-            return min_ts, max_ts
+    )
+    if not result:
         return fallback_min, fallback_max
-    finally:
-        client.close()
+    min_ts = result[0].get("min_ts")
+    max_ts = result[0].get("max_ts")
+    if isinstance(min_ts, datetime) and isinstance(max_ts, datetime):
+        return min_ts, max_ts
+    return fallback_min, fallback_max
 
 
 def _pick_random_window(
@@ -210,20 +198,16 @@ def _pick_random_window(
 
 def run_aggregate_worker(
     worker_id: int,
-    mongo_uri: str,
-    db_name: str,
-    collection_name: str,
+    coll,
+    collection_label: str,
     symbols: List[str],
     stop_at: float,
     wait_ms: float,
     min_ts: datetime,
     max_ts: datetime,
 ) -> WorkerStats:
-    client = MongoClient(mongo_uri, appname="parallel-query-benchmark")
-    coll = client[db_name][collection_name]
-    
     worker_logger = logging.getLogger(f"agg_worker.{worker_id}")
-    worker_logger.info(f"Aggregate worker {worker_id} started - connecting to {db_name}.{collection_name}")
+    worker_logger.info(f"Aggregate worker {worker_id} started - using {collection_label}")
 
     queries = 0
     errors = 0
@@ -280,7 +264,6 @@ def run_aggregate_worker(
             worker_logger.error(f"Aggregation failed: {e}", exc_info=True)
             errors += 1
 
-    client.close()
     worker_logger.info(f"Aggregate worker {worker_id} finished - {queries} queries, {errors} errors")
 
     return WorkerStats(
@@ -465,84 +448,89 @@ def main() -> None:
     print(f"  find_wait_ms={args.find_wait_ms}")
     print(f"  agg_wait_ms={args.agg_wait_ms}")
 
-    find_start = datetime.now()
-    find_stop_at = time.time() + duration_seconds
+    client = MongoClient(mongo_uri, appname="parallel-query-benchmark", maxPoolSize=200)
+    try:
+        find_coll = client[args.db][args.collection]
+        agg_coll = client[args.db][args.agg_collection]
 
-    workers: List[WorkerStats] = []
-    lock = threading.Lock()
+        find_start = datetime.now()
+        find_stop_at = time.time() + duration_seconds
 
-    with ThreadPoolExecutor(max_workers=args.users) as executor:
-        futures = [
-            executor.submit(
-                run_worker,
-                worker_id=i + 1,
-                mongo_uri=mongo_uri,
-                db_name=args.db,
-                collection_name=args.collection,
-                symbols=symbols,
-                projection_doc=projection_doc,
-                stop_at=find_stop_at,
-                wait_ms=args.find_wait_ms,
-            )
-            for i in range(args.users)
-        ]
+        workers: List[WorkerStats] = []
+        lock = threading.Lock()
 
-        for future in as_completed(futures):
-            result = future.result()
-            with lock:
-                workers.append(result)
+        with ThreadPoolExecutor(max_workers=args.users) as executor:
+            futures = [
+                executor.submit(
+                    run_worker,
+                    worker_id=i + 1,
+                    coll=find_coll,
+                    collection_label=f"{args.db}.{args.collection}",
+                    symbols=symbols,
+                    projection_doc=projection_doc,
+                    stop_at=find_stop_at,
+                    wait_ms=args.find_wait_ms,
+                )
+                for i in range(args.users)
+            ]
 
-    find_end = datetime.now()
-    workers.sort(key=lambda x: x.worker_id)
-    summarize(
-        workers,
-        duration_seconds,
-        find_start,
-        find_end,
-        section_name="FindOne Benchmark",
-    )
+            for future in as_completed(futures):
+                result = future.result()
+                with lock:
+                    workers.append(result)
 
-    agg_min_ts, agg_max_ts = _resolve_ts_bounds(mongo_uri, args.db, args.agg_collection)
-    print("\nStarting aggregate benchmark with settings:")
-    print(f"  db={args.db}")
-    print(f"  collection={args.agg_collection}")
-    print("  bin_sizes=[5, 15, 30]")
-    print(f"  ts_range=[{agg_min_ts.isoformat()} to {agg_max_ts.isoformat()}]")
+        find_end = datetime.now()
+        workers.sort(key=lambda x: x.worker_id)
+        summarize(
+            workers,
+            duration_seconds,
+            find_start,
+            find_end,
+            section_name="FindOne Benchmark",
+        )
 
-    agg_start = datetime.now()
-    agg_stop_at = time.time() + duration_seconds
+        agg_min_ts, agg_max_ts = _resolve_ts_bounds(agg_coll)
+        print("\nStarting aggregate benchmark with settings:")
+        print(f"  db={args.db}")
+        print(f"  collection={args.agg_collection}")
+        print("  bin_sizes=[5, 15, 30]")
+        print(f"  ts_range=[{agg_min_ts.isoformat()} to {agg_max_ts.isoformat()}]")
 
-    agg_workers: List[WorkerStats] = []
-    with ThreadPoolExecutor(max_workers=args.users) as executor:
-        futures = [
-            executor.submit(
-                run_aggregate_worker,
-                worker_id=i + 1,
-                mongo_uri=mongo_uri,
-                db_name=args.db,
-                collection_name=args.agg_collection,
-                symbols=symbols,
-                stop_at=agg_stop_at,
-                wait_ms=args.agg_wait_ms,
-                min_ts=agg_min_ts,
-                max_ts=agg_max_ts,
-            )
-            for i in range(args.users)
-        ]
+        agg_start = datetime.now()
+        agg_stop_at = time.time() + duration_seconds
 
-        for future in as_completed(futures):
-            result = future.result()
-            with lock:
-                agg_workers.append(result)
+        agg_workers: List[WorkerStats] = []
+        with ThreadPoolExecutor(max_workers=args.users) as executor:
+            futures = [
+                executor.submit(
+                    run_aggregate_worker,
+                    worker_id=i + 1,
+                    coll=agg_coll,
+                    collection_label=f"{args.db}.{args.agg_collection}",
+                    symbols=symbols,
+                    stop_at=agg_stop_at,
+                    wait_ms=args.agg_wait_ms,
+                    min_ts=agg_min_ts,
+                    max_ts=agg_max_ts,
+                )
+                for i in range(args.users)
+            ]
 
-    agg_end = datetime.now()
-    agg_workers.sort(key=lambda x: x.worker_id)
-    summarize_aggregate(
-        agg_workers,
-        duration_seconds,
-        agg_start,
-        agg_end,
-    )
+            for future in as_completed(futures):
+                result = future.result()
+                with lock:
+                    agg_workers.append(result)
+
+        agg_end = datetime.now()
+        agg_workers.sort(key=lambda x: x.worker_id)
+        summarize_aggregate(
+            agg_workers,
+            duration_seconds,
+            agg_start,
+            agg_end,
+        )
+    finally:
+        client.close()
 
 
 if __name__ == "__main__":
