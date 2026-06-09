@@ -128,6 +128,26 @@ Both collections are time series collections with:
    - Check MongoDB Atlas network access list includes your IP
    - Ensure connectivity to MongoDB Atlas
 
+2. **Check round-trip latency to Atlas**:
+   - Measure a single MongoDB command round-trip:
+
+```bash
+mongosh "$MONGO_ATLAS_URI" --eval 'const t=Date.now(); db.runCommand({ ping: 1 }); print(`RTT_ms=${Date.now()-t}`)'
+```
+
+   - Capture multiple samples:
+
+```bash
+mongosh "$MONGO_ATLAS_URI" --quiet --eval '
+for (let i = 0; i < 10; i++) {
+  const t = Date.now();
+  db.runCommand({ ping: 1 });
+  print(Date.now() - t);
+}'
+```
+
+   - This measures client-to-Atlas round-trip time for a MongoDB command, which is more useful than raw network ping for database performance.
+
 2. **Yahoo Finance errors**:
    - Some tickers may not have data available
    - The script handles errors gracefully and continues

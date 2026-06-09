@@ -427,7 +427,7 @@ def main() -> None:
     load_dotenv()
     
     # Initialize logging
-    logger = setup_logging(log_file=f"benchmark_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    logger = setup_logging(log_file=f"logs/benchmark_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
     logger.info("Benchmark started")
     
     mongo_uri = os.getenv("MONGO_ATLAS_URI", "mongodb://localhost:27017")
@@ -448,7 +448,35 @@ def main() -> None:
     print(f"  find_wait_ms={args.find_wait_ms}")
     print(f"  agg_wait_ms={args.agg_wait_ms}")
 
-    client = MongoClient(mongo_uri, appname="parallel-query-benchmark", maxPoolSize=200)
+    try:
+        # Keep minPoolSize at 100 to avoid aggressive background socket creation.
+        # A large minPoolSize can amplify intermittent DNS failures on periodic pool maintenance.
+        client = MongoClient(
+            mongo_uri,
+            appname="parallel-query-benchmark",
+            maxPoolSize=200,
+            minPoolSize=100,
+            serverSelectionTimeoutMS=30000,
+            connectTimeoutMS=30000,
+            retryReads=True,
+            retryWrites=True,
+        )
+
+        # Force early server selection so startup failures are explicit and immediate.
+        client.admin.command("ping")
+        logger.info("Successfully connected to MongoDB")
+
+        # Get host info for logging
+        try:
+            server_info = client.server_info()
+            host = server_info.get("host", "unknown")
+            version = server_info.get("version", "unknown")
+            logger.info(f"Connected to MongoDB host: {host}, version: {version}")
+        except Exception as e:
+            logger.error(f"Failed to retrieve MongoDB server info: {e}", exc_info=True)
+    except Exception as e:
+        logger.error(f"Failed to connect to MongoDB: {e}", exc_info=True)
+        return
     try:
         find_coll = client[args.db][args.collection]
         agg_coll = client[args.db][args.agg_collection]

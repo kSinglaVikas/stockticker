@@ -12,5 +12,6 @@ venv/
 
 # Ignore log files
 *.log
+logs/
 
 customer-script/
