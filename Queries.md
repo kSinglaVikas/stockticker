@@ -94,6 +94,15 @@ db.getCollection("1d_stocks").find({
 }).sort({ ts: 1 }).explain("executionStats")
 ``` 
 
+`findOne()` returns a document, not a cursor, so `findOne().explain()` fails in `mongosh`.
+If you want the plan for a single-document lookup, use `find().limit(1).explain()` instead:
+
+```
+db.getCollection("1d_stocks").find({
+  t: "TCS.NS"
+}).limit(1).explain("executionStats")
+```
+
 ## 7. 5 min Agg for Open, close, high, low for a ticker (e.g., "TCS.NS")
 ```
 db.getCollection("7d_stocks").aggregate([
