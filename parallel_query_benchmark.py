@@ -128,14 +128,10 @@ def run_worker(
                 {"$sort": {"ts": 1}},
             ]
             start = time.perf_counter()
-            result = list(coll.aggregate(pipeline))
+            _ = list(coll.aggregate(pipeline))
             elapsed_ms = (time.perf_counter() - start) * 1000.0
             client_latencies_ms.append(elapsed_ms)
-            
-            # Log query details to capture driver behavior
-            if queries % 10 == 0:  # Log every 10th query to avoid spam
-                worker_logger.debug(f"aggregate query completed: stages={len(pipeline)}, filter_keys={list(filter_doc.keys())}, docs_returned={len(result)}, elapsed_ms={elapsed_ms:.2f}")
-            
+                        
             queries += 1
             time.sleep(wait_ms / 1000.0)
 

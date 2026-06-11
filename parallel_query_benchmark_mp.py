@@ -198,16 +198,15 @@ def run_worker(
                         "$lt": datetime(2026, 6, 2, 15, 30),
                     },
                 }
+                pipeline = [
+                    {"$match": filter_doc},
+                    {"$project": projection_doc},
+                    {"$sort": {"ts": 1}},
+                ]
                 start = time.perf_counter()
-                result = list(coll.find(filter_doc, projection_doc, sort=[("ts", 1)]))
+                _ = list(coll.aggregate(pipeline))
                 elapsed_ms = (time.perf_counter() - start) * 1000.0
                 client_latencies_ms.append(elapsed_ms)
-
-                if queries % 10 == 0:
-                    worker_logger.debug(
-                        f"find query: filter_keys={list(filter_doc.keys())}, "
-                        f"docs={len(result)}, elapsed_ms={elapsed_ms:.2f}"
-                    )
 
                 queries += 1
                 time.sleep(wait_ms / 1000.0)
