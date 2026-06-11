@@ -173,22 +173,11 @@ with ThreadPoolExecutor(max_workers=max_workers) as executor:
         if counter % 10 == 0:
             print(f"Processed {counter}/{len(tickers)} tickers...")
 
-print("Done.")
+print("Done with 7-day data.")
 
 # Build 1d_stocks from 7d_stocks using aggregation pipeline for latest IST date.
 latest_date_pipeline = [
-    {
-        '$project': {
-            'day_ist': {
-                '$dateTrunc': {
-                    'date': '$ts',
-                    'unit': 'day',
-                    'timezone': 'Asia/Kolkata'
-                }
-            }
-        }
-    },
-    {'$group': {'_id': None, 'latest_day_ist': {'$max': '$day_ist'}}}
+    {'$group': {'_id': None, 'latest_day_ist': {'$max': '$ts'}}}
 ]
 
 latest_day_result = list(coll_7d.aggregate(latest_date_pipeline))
@@ -196,23 +185,13 @@ latest_day_result = list(coll_7d.aggregate(latest_date_pipeline))
 if latest_day_result:
     latest_day_ist = latest_day_result[0]['latest_day_ist']
     copy_pipeline = [
-        {
-            '$addFields': {
-                'day_ist': {
-                    '$dateTrunc': {
-                        'date': '$ts',
-                        'unit': 'day',
-                        'timezone': 'Asia/Kolkata'
-                    }
-                }
-            }
-        },
-        {'$match': {'day_ist': latest_day_ist}},
+        {'$match': {'ts': latest_day_ist}},
         {'$project': {'_id': 0, 'day_ist': 0}}
     ]
 
     latest_day_docs = list(coll_7d.aggregate(copy_pipeline))
     if latest_day_docs:
+        print(f"Inserting {len(latest_day_docs)} docs for latest IST day into 1d_stocks...")
         coll_1d.insert_many(latest_day_docs)
     print(f"Latest IST date in 1d_stocks: {latest_day_ist.date()}")
     print(f"Inserted {len(latest_day_docs)} docs into 1d_stocks")
