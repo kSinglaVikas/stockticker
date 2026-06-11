@@ -122,14 +122,19 @@ def run_worker(
     while time.time() < stop_at:
         try:
             filter_doc = {"t": random.choice(symbols), "ts": {"$gte": datetime(2026, 6, 2, 9, 15), "$lt": datetime(2026, 6, 2, 15, 30)}}
+            pipeline = [
+                {"$match": filter_doc},
+                {"$project": projection_doc},
+                {"$sort": {"ts": 1}},
+            ]
             start = time.perf_counter()
-            result = list(coll.find(filter_doc, projection_doc, sort=[("ts", 1)]))
+            result = list(coll.aggregate(pipeline))
             elapsed_ms = (time.perf_counter() - start) * 1000.0
             client_latencies_ms.append(elapsed_ms)
             
             # Log query details to capture driver behavior
             if queries % 10 == 0:  # Log every 10th query to avoid spam
-                worker_logger.debug(f"find query completed: filter_keys={list(filter_doc.keys())}, docs_returned={len(result)}, elapsed_ms={elapsed_ms:.2f}")
+                worker_logger.debug(f"aggregate query completed: stages={len(pipeline)}, filter_keys={list(filter_doc.keys())}, docs_returned={len(result)}, elapsed_ms={elapsed_ms:.2f}")
             
             queries += 1
             time.sleep(wait_ms / 1000.0)
