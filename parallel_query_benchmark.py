@@ -510,7 +510,7 @@ def main() -> None:
             duration_seconds,
             find_start,
             find_end,
-            section_name="FindOne Benchmark",
+            section_name="Single Ticker Benchmark",
         )
 
         agg_min_ts, agg_max_ts = _resolve_ts_bounds(agg_coll)
