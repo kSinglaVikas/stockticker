@@ -198,13 +198,8 @@ def run_worker(
                         "$lt": datetime(2026, 6, 2, 15, 30),
                     },
                 }
-                pipeline = [
-                    {"$match": filter_doc},
-                    {"$project": projection_doc},
-                    {"$sort": {"ts": 1}},
-                ]
                 start = time.perf_counter()
-                _ = list(coll.aggregate(pipeline))
+                _ = list(coll.find(filter_doc, projection_doc,sort=[("ts", 1)]))
                 elapsed_ms = (time.perf_counter() - start) * 1000.0
                 client_latencies_ms.append(elapsed_ms)
 
@@ -522,7 +517,7 @@ def main() -> None:
     mongo_uri = os.getenv("MONGO_ATLAS_URI", "mongodb://localhost:27017")
     duration_seconds = args.minutes * 60
     symbols = SYMBOL_POOL
-    projection_doc = {"_id": 0}
+    projection_doc = {"_id": 0, "t": 0}
 
     print("Starting multiprocessing benchmark with settings:")
     print(f"  users (processes)={args.users}")
