@@ -142,7 +142,7 @@ mongosh "$MONGO_ATLAS_URI" --quiet --eval '
 for (let i = 0; i < 10; i++) {
   const t = Date.now();
   db.runCommand({ ping: 1 });
-  print(Date.now() - t);
+  print((Date.now() - t)*1000); // RTT in microseconds
 }'
 ```
 
